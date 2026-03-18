@@ -34,11 +34,14 @@ export class SlackChannel implements Channel {
   private app: App;
   private botUserId: string | undefined;
   private connected = false;
-  private outgoingQueue: Array<{ jid: string; text: string }> = [];
+  private outgoingQueue: Array<{ jid: string; text: string; threadTs?: string }> = [];  
   private flushing = false;
   private userNameCache = new Map<string, string>();
 
   private opts: SlackChannelOpts;
+  
+  // Maps channelId → thread_ts of the last user message, so replies go into the same thread.
+  private pendingThreadTs = new Map<string, string>();
 
   constructor(opts: SlackChannelOpts) {
     this.opts = opts;
@@ -84,6 +87,12 @@ export class SlackChannel implements Channel {
       // always go to the channel, not back into the thread.
 
       const jid = `slack:${msg.channel}`;
+      const isBotMessage = !!msg.bot_id || msg.user === this.botUserId;
+      // Store thread_ts so replies go into the same thread
+      if (!isBotMessage) {
+        const threadTs = (msg as any).thread_ts || msg.ts;
+        this.pendingThreadTs.set(msg.channel, threadTs);
+      }
       const timestamp = new Date(parseFloat(msg.ts) * 1000).toISOString();
       const isGroup = msg.channel_type !== 'im';
 
@@ -92,9 +101,7 @@ export class SlackChannel implements Channel {
 
       // Only deliver full messages for registered groups
       const groups = this.opts.registeredGroups();
-      if (!groups[jid]) return;
-
-      const isBotMessage = !!msg.bot_id || msg.user === this.botUserId;
+      if (!groups[jid]) return;      
 
       let senderName: string;
       if (isBotMessage) {
@@ -158,9 +165,10 @@ export class SlackChannel implements Channel {
 
   async sendMessage(jid: string, text: string): Promise<void> {
     const channelId = jid.replace(/^slack:/, '');
+    const threadTs = this.pendingThreadTs.get(channelId);
 
     if (!this.connected) {
-      this.outgoingQueue.push({ jid, text });
+      this.outgoingQueue.push({ jid, text, threadTs });
       logger.info(
         { jid, queueSize: this.outgoingQueue.length },
         'Slack disconnected, message queued',
@@ -168,21 +176,25 @@ export class SlackChannel implements Channel {
       return;
     }
 
+    const postChunk = async (chunk: string) => {
+      await this.app.client.chat.postMessage({
+        channel: channelId,
+        text: chunk,
+        ...(threadTs ? { thread_ts: threadTs } : {}),
+      });
+    };
+
     try {
-      // Slack limits messages to ~4000 characters; split if needed
       if (text.length <= MAX_MESSAGE_LENGTH) {
-        await this.app.client.chat.postMessage({ channel: channelId, text });
+        await postChunk(text);
       } else {
         for (let i = 0; i < text.length; i += MAX_MESSAGE_LENGTH) {
-          await this.app.client.chat.postMessage({
-            channel: channelId,
-            text: text.slice(i, i + MAX_MESSAGE_LENGTH),
-          });
+          await postChunk(text.slice(i, i + MAX_MESSAGE_LENGTH));
         }
       }
       logger.info({ jid, length: text.length }, 'Slack message sent');
     } catch (err) {
-      this.outgoingQueue.push({ jid, text });
+      this.outgoingQueue.push({ jid, text, threadTs });
       logger.warn(
         { jid, err, queueSize: this.outgoingQueue.length },
         'Failed to send Slack message, queued',
@@ -275,6 +287,7 @@ export class SlackChannel implements Channel {
         await this.app.client.chat.postMessage({
           channel: channelId,
           text: item.text,
+          ...(item.threadTs ? { thread_ts: item.threadTs } : {}),
         });
         logger.info(
           { jid: item.jid, length: item.text.length },
