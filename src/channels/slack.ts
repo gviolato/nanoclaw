@@ -1,3 +1,5 @@
+import fs from 'fs';
+
 import { App, LogLevel } from '@slack/bolt';
 import type { GenericMessageEvent, BotMessageEvent } from '@slack/types';
 
@@ -221,6 +223,26 @@ export class SlackChannel implements Channel {
   // doesn't need channel-specific branching.
   async setTyping(_jid: string, _isTyping: boolean): Promise<void> {
     // no-op: Slack Bot API has no typing indicator endpoint
+  }
+
+  async sendFile(jid: string, filePath: string, filename: string, comment?: string, replyTo?: string): Promise<void> {
+    const channelId = jid.replace(/^slack:/, '');
+    const threadTs = replyTo ?? this.pendingThreadTs.get(channelId);
+
+    try {
+      const fileContent = fs.readFileSync(filePath);
+      await (this.app.client as any).filesUploadV2({
+        channel_id: channelId,
+        filename,
+        file: fileContent,
+        ...(comment ? { initial_comment: comment } : {}),
+        ...(threadTs ? { thread_ts: threadTs } : {}),
+      });
+      logger.info({ jid, filename }, 'Slack file uploaded');
+    } catch (err) {
+      logger.error({ jid, filename, err }, 'Failed to upload file to Slack');
+      throw err;
+    }
   }
 
   /**

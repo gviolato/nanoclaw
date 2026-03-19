@@ -298,6 +298,44 @@ server.tool(
 );
 
 server.tool(
+  'upload_file',
+  `Upload a file to the current channel (e.g., Slack). The file must exist in /workspace/group/.
+
+Use this to share reports, exports, or any generated artifact directly in the conversation thread. Supported on Slack; on other channels the file content is sent as a text message fallback.
+
+Examples:
+- Generate a Markdown report, save to /workspace/group/report.md, then call upload_file with that path
+- Upload a CSV export at /workspace/group/data.csv with a short comment`,
+  {
+    container_file_path: z.string().describe('Absolute path inside the container (must start with /workspace/group/, e.g. /workspace/group/report.md)'),
+    filename: z.string().optional().describe('Display filename shown in the channel (defaults to the basename of container_file_path)'),
+    comment: z.string().optional().describe('Short message to accompany the file'),
+  },
+  async (args) => {
+    if (!args.container_file_path.startsWith('/workspace/group/')) {
+      return {
+        content: [{ type: 'text' as const, text: 'container_file_path must start with /workspace/group/' }],
+        isError: true,
+      };
+    }
+
+    const data: Record<string, string | undefined> = {
+      type: 'upload_file',
+      chatJid,
+      containerFilePath: args.container_file_path,
+      filename: args.filename || undefined,
+      comment: args.comment || undefined,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(MESSAGES_DIR, data);
+
+    return { content: [{ type: 'text' as const, text: 'File upload queued.' }] };
+  },
+);
+
+server.tool(
   'register_group',
   `Register a new chat/group so the agent can respond to messages there. Main group only.
 
