@@ -61,7 +61,10 @@ export function startIpcWatcher(deps: IpcDeps): void {
     }
 
     for (const sourceGroup of groupFolders) {
-      const isMain = folderIsMain.get(sourceGroup) === true;
+      // Thread IPC folders are named {groupFolder}_t{safeTs}. Strip the suffix
+      // to get the base group folder for authorization and isMain checks.
+      const baseFolder = sourceGroup.replace(/_t[A-Za-z0-9_-]+$/, '');
+      const isMain = folderIsMain.get(baseFolder) === true;
       const messagesDir = path.join(ipcBaseDir, sourceGroup, 'messages');
       const tasksDir = path.join(ipcBaseDir, sourceGroup, 'tasks');
 
@@ -80,7 +83,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
                 const targetGroup = registeredGroups[data.chatJid];
                 if (
                   isMain ||
-                  (targetGroup && targetGroup.folder === sourceGroup)
+                  (targetGroup && targetGroup.folder === baseFolder)
                 ) {
                   await deps.sendMessage(data.chatJid, data.text);
                   logger.info(
@@ -95,13 +98,13 @@ export function startIpcWatcher(deps: IpcDeps): void {
                 }
               } else if (data.type === 'upload_file' && data.chatJid && data.containerFilePath) {
                 const targetGroup = registeredGroups[data.chatJid];
-                if (isMain || (targetGroup && targetGroup.folder === sourceGroup)) {
+                if (isMain || (targetGroup && targetGroup.folder === baseFolder)) {
                   if (deps.sendFile) {
                     // Map container path to host path.
-                    // /workspace/group/... → {DATA_DIR}/groups/{sourceGroup}/...
+                    // /workspace/group/... → {DATA_DIR}/groups/{baseFolder}/...
                     const hostFilePath = data.containerFilePath.replace(
                       /^\/workspace\/group\//,
-                      path.join(DATA_DIR, 'groups', sourceGroup) + '/',
+                      path.join(DATA_DIR, 'groups', baseFolder) + '/',
                     );
                     const filename = data.filename || path.basename(hostFilePath);
                     await deps.sendFile(data.chatJid, hostFilePath, filename, data.comment || undefined);
@@ -145,8 +148,8 @@ export function startIpcWatcher(deps: IpcDeps): void {
             const filePath = path.join(tasksDir, file);
             try {
               const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-              // Pass source group identity to processTaskIpc for authorization
-              await processTaskIpc(data, sourceGroup, isMain, deps);
+              // Pass base group identity to processTaskIpc for authorization
+              await processTaskIpc(data, baseFolder, isMain, deps);
               fs.unlinkSync(filePath);
             } catch (err) {
               logger.error(
