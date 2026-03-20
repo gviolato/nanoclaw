@@ -3,7 +3,7 @@ import path from 'path';
 
 import { CronExpressionParser } from 'cron-parser';
 
-import { DATA_DIR, IPC_POLL_INTERVAL, TIMEZONE } from './config.js';
+import { DATA_DIR, GROUPS_DIR, IPC_POLL_INTERVAL, TIMEZONE } from './config.js';
 import { AvailableGroup } from './container-runner.js';
 import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
 import { isValidGroupFolder } from './group-folder.js';
@@ -101,10 +101,10 @@ export function startIpcWatcher(deps: IpcDeps): void {
                 if (isMain || (targetGroup && targetGroup.folder === baseFolder)) {
                   if (deps.sendFile) {
                     // Map container path to host path.
-                    // /workspace/group/... → {DATA_DIR}/groups/{baseFolder}/...
+                    // /workspace/group/... → {GROUPS_DIR}/{baseFolder}/...
                     const hostFilePath = data.containerFilePath.replace(
                       /^\/workspace\/group\//,
-                      path.join(DATA_DIR, 'groups', baseFolder) + '/',
+                      path.join(GROUPS_DIR, baseFolder) + '/',
                     );
                     const filename = data.filename || path.basename(hostFilePath);
                     await deps.sendFile(data.chatJid, hostFilePath, filename, data.comment || undefined);
